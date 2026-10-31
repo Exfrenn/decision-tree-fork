@@ -81,7 +81,29 @@ class BaseDecisionTree(ABC):
         Returns:
             BaseDecisionTree: ``self`` (the fitted estimator).
         """
-        raise NotImplementedError("TODO: implement fit")
+        # Primero validamos los hiperparametros. Si el usuario mete algo raro
+        # mejor avisar con un error claro que fallar despues en medio del arbol.
+        if self.max_depth is not None:
+            if not isinstance(self.max_depth, int) or self.max_depth < 0:
+                raise ValueError("max_depth debe ser None o un entero >= 0")
+        if not isinstance(self.min_samples_split, int) or self.min_samples_split < 2:
+            raise ValueError("min_samples_split debe ser un entero >= 2")
+        # Esta lista de criterios validos la define cada subclase (gini/entropy, mse...)
+        if self.criterion not in self._valid_criteria():
+            raise ValueError(f"criterion invalido: {self.criterion}")
+
+        # Convertimos a arrays de numpy para poder trabajar comodos con indices.
+        import numpy as np
+        X = np.asarray(X)
+        y = np.asarray(y)
+
+        # Chequeo basico: X e y deben tener el mismo numero de muestras (filas).
+        if X.shape[0] != y.shape[0]:
+            raise ValueError("X e y deben tener el mismo numero de muestras")
+
+        # Construimos el arbol recursivamente empezando en profundidad 0 (la raiz).
+        self.root = self._build_tree(X, y, depth=0)
+        return self
 
     def predict(self, X):
         """Predict a target for each row of ``X``.
@@ -98,7 +120,26 @@ class BaseDecisionTree(ABC):
         Returns:
             array, shape (n_samples,): Predicted target for every sample.
         """
-        raise NotImplementedError("TODO: implement predict")
+        # Si todavia no entrenamos no tenemos arbol, asi que no podemos predecir.
+        if self.root is None:
+            raise ValueError("El modelo no ha sido entrenado. Llama a fit primero.")
+
+        import numpy as np
+        X = np.asarray(X)
+
+        # Para cada fila recorremos el arbol desde la raiz hasta llegar a una hoja.
+        predictions = []
+        for x in X:
+            node = self.root
+            # Mientras no sea hoja, decidimos si ir a la izquierda o derecha.
+            while not node.is_leaf:
+                if x[node.feature_index] <= node.threshold:
+                    node = node.left
+                else:
+                    node = node.right
+            # Al llegar a la hoja guardamos su valor como la prediccion.
+            predictions.append(node.value)
+        return np.array(predictions)
 
     def eval(self, X, y):
         """Score the model on ``(X, y)``.
@@ -114,7 +155,19 @@ class BaseDecisionTree(ABC):
             float: Metric value (accuracy for classification, R^2 for
             regression; higher is better).
         """
-        raise NotImplementedError("TODO: implement eval")
+        # eval es simple: predecimos y comparamos con los valores reales usando
+        # la metrica que defina la subclase (accuracy, R^2, etc).
+        y_pred = self.predict(X)
+        return self._score(y, y_pred)
+
+    def _valid_criteria(self):
+        """Lista de criterios validos. Cada subclase la sobreescribe.
+
+        Returns:
+            tuple: Nombres de criterios aceptados por este tipo de arbol.
+        """
+        # Por defecto no aceptamos ninguno; las subclases dicen cuales valen.
+        return ()
 
     @abstractmethod
     def _build_tree(self, X, y, depth):
